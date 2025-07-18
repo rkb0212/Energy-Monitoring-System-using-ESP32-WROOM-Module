@@ -2,7 +2,8 @@
 #define BLYNK_TEMPLATE_ID "TMPL3ntrUiNDX"
 #define BLYNK_TEMPLATE_NAME "Electric Billing"
 #define BLYNK_AUTH_TOKEN "81cG20HbB8ndMO68T2qOqo4JmnZbkQlT"
-
+#include <WiFiClientSecure.h>
+#include <ESP32_MailClient.h>
 #include <WiFi.h>
 #include <WiFiClient.h>
 #include <BlynkSimpleEsp32.h>
@@ -43,6 +44,35 @@ double totalEnergy3 = 0.0;
 double totalEnergy4 = 0.0;
 
 const double chargingRate = 5.0; // Rs per kWh
+// Data Logging Variables
+#define STORAGE_SIZE 24   // 12 hours worth of 30-min logs
+String dataLog[STORAGE_SIZE];
+unsigned int logIndex = 0;
+unsigned long lastLogMillis = 0;
+unsigned long logInterval = 1800000;  // 30 minutes
+unsigned long lastEmailMillis = 0;
+unsigned long emailInterval = 43200000;  // 12 hours
+// Email Function
+void sendEmailWithDataLog() {
+  SMTPData smtpData;
+  smtpData.setLogin("smtp.gmail.com", 465, "sender@gmail.com", "12345678");  
+  smtpData.setSender("Smart Billing System", "your_email@gmail.com");                   
+  smtpData.setPriority("High");
+  smtpData.setSubject("12-Hour Energy Report");
+  smtpData.setMessage("Attached is the energy consumption report for the last 12 hours.", false);
+
+  String csvContent = "Timestamp(min),Energy1(kWh),Energy2(kWh),Energy3(kWh),Energy4(kWh),Temp(C),Humidity(%)\n";
+  for (int i = 0; i < STORAGE_SIZE; i++) {
+    csvContent += dataLog[i] + "\n";
+  }
+  smtpData.addAttachData("EnergyReport.csv", csvContent.c_str(), csvContent.length(), "text/csv");
+  smtpData.addRecipient("receiver@gmail.com");    
+
+  if (!MailClient.sendMail(smtpData)) {
+    Serial.println("Error sending Email: " + MailClient.smtpErrorReason());
+  }
+  smtpData.empty();
+}
 
 // LCD I2C configuration
 LiquidCrystal_I2C lcd(0x27, 16, 2); // Change the address (0x27) if your LCD has a different address
@@ -119,6 +149,29 @@ void loop() {
     Blynk.virtualWrite(V5, totalPrice4);
     Blynk.run();
   }
+  // Data Logging Every 30 Minutes 
+  if (currentMillis - lastLogMillis >= logInterval) {
+    lastLogMillis = currentMillis;
+
+    String logEntry = String(millis() / 1000 / 60) + " min, "
+                    + String(totalEnergy1, 2) + ", "
+                    + String(totalEnergy2, 2) + ", "
+                    + String(totalEnergy3, 2) + ", "
+                    + String(totalEnergy4, 2) + ", "
+                    + String(dht.readTemperature(), 1) + ", "
+                    + String(dht.readHumidity(), 1);
+
+    dataLog[logIndex] = logEntry;
+    logIndex = (logIndex + 1) % STORAGE_SIZE;
+  }
+
+  // Emailing Dataset Every 12 Hours 
+  if (currentMillis - lastEmailMillis >= emailInterval) {
+    lastEmailMillis = currentMillis;
+    sendEmailWithDataLog();
+  }
+}
+
 }
 
 BLYNK_WRITE(V10) {
